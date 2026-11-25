@@ -282,7 +282,9 @@
             const {x,y} = positions.get(node.id);
             const name = kindName[node.kind];
             const btn = button('', () => select(node.id), {
-                class:'kg-node ' + node.kind + (selected === node.id ? ' is-selected' : ''),
+                // The kind is prefixed: the page has classes named "problem" and "insight" of its own, and one of its
+                // rules hides ".problem" while the graph is open.
+                class:'kg-node kg-' + node.kind + (selected === node.id ? ' is-selected' : ''),
                 'aria-label': name + ' · ' + node.title, 'aria-pressed': String(selected === node.id),
                 'data-node':node.id, title:node.title, style:'left:' + x + 'px;top:' + y + 'px;width:' + width + 'px;height:' + height + 'px',
             });
@@ -293,11 +295,35 @@
         typeset(board);
     }
 
+    // A drag moves the diagram, as it moves the algorithm canvas. A press that does not move stays a click.
+    function panMap(e, map) {
+        if (e.button !== 0 || e.pointerType === 'touch') return;                // a finger scrolls the diagram already
+        const box = map.getBoundingClientRect();
+        if (e.clientX - box.left >= map.clientWidth || e.clientY - box.top >= map.clientHeight) return;     // a scroll bar
+        const sx = e.clientX, sy = e.clientY, left = map.scrollLeft, top = map.scrollTop;
+        let moved = false;
+        track(ev => {
+            const dx = ev.clientX - sx, dy = ev.clientY - sy;
+            if (!moved && Math.hypot(dx, dy) < 4) return;
+            if (!moved) { moved = true; busyDrag = true; map.classList.add('panning'); }    // no reload from disk mid-drag
+            map.scrollLeft = left - dx; map.scrollTop = top - dy;
+        }, () => {
+            if (!moved) return;
+            busyDrag = false; map.classList.remove('panning');
+            // The click that ends a drag must not select the node or the connection under the pointer.
+            const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); };
+            map.addEventListener('click', swallow, {capture: true, once: true});
+            setTimeout(() => map.removeEventListener('click', swallow, {capture: true}));
+        });
+    }
+
     function render(host) {
         if (!host) return;
         mount = host;
         const oldScroll = host.querySelector('.kg-map-scroll'), oldPanel = host.querySelector('.kg-inspector');
         const scroll = [oldScroll?.scrollLeft || 0, oldScroll?.scrollTop || 0, oldPanel?.scrollTop || 0];
+        // Selecting a node redraws the diagram. The keyboard keeps scrolling it only if the focus stays inside.
+        const held = oldScroll?.contains(document.activeElement) ? document.activeElement.dataset.node || '' : null;
         const activeField = document.activeElement?.closest('.kg-edit') ? document.activeElement.id : null;
         const caret = activeField && document.activeElement.tagName === 'TEXTAREA' ? document.activeElement.selectionStart : null;
         watcher?.disconnect();
@@ -312,7 +338,8 @@
             legend.append(h('span', {}, h('i', {class:'kg-key ' + kind, 'aria-hidden':'true'}), name));
         }
         const board = h('div', {class:'kg-board'});
-        const map = h('div', {class:'kg-map-scroll', tabindex:'0', role:'region', 'aria-label':'Graph diagram, scroll to explore'}, board);
+        const map = h('div', {class:'kg-map-scroll', tabindex:'0', role:'region', 'aria-label':'Graph diagram, scroll or drag to explore'}, board);
+        map.addEventListener('pointerdown', e => panMap(e, map));
         const panel = inspector(data, data.byId.get(selected), data.edges.find(e => e.id === selected));
         const shell = h('section', {class:'kg-shell', 'aria-label':'Problem graph'},
             h('div', {class:'kg-main'}, toolbar, map, legend), panel);
@@ -320,6 +347,10 @@
         let lastWidth = map.clientWidth;
         drawMap(board, data, lastWidth);
         map.scrollLeft = scroll[0]; map.scrollTop = scroll[1]; panel.scrollTop = scroll[2];
+        if (held !== null && !draft) {
+            const again = held && [...board.querySelectorAll('.kg-node')].find(n => n.dataset.node === held);
+            (again || map).focus({preventScroll:true});
+        }
         if (activeField && draft) {
             const input = host.querySelector('#' + CSS.escape(activeField));
             if (input) {
