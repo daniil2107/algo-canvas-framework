@@ -22,7 +22,18 @@
 .kg-key.similar::after, .kg-key.similar::before { border-left-color: var(--formulation); }
 .kg-key.similar::before { right: auto; left: 0; transform: rotate(180deg); }
 .kg-map-scroll { min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain;
-    background: radial-gradient(var(--dot) 1px, transparent 1.2px) 0 0 / 22px 22px var(--bg); }
+    background: radial-gradient(var(--dot) 1px, transparent 1.2px) 0 0 / 22px 22px var(--bg);
+    cursor: grab; user-select: none; -webkit-user-select: none; scrollbar-gutter: stable; }
+.kg-map-scroll.panning, .kg-map-scroll.panning .kg-node, .kg-map-scroll.panning .kg-hit { cursor: grabbing; }
+/* The diagram is usually larger than its window. Its scroll bars stay in sight, so that this shows. */
+.kg-map-scroll::-webkit-scrollbar { width: 11px; height: 11px; }
+.kg-map-scroll::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 6px; background-clip: content-box;
+    background-color: color-mix(in oklab, var(--muted) 55%, transparent); }
+.kg-map-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+.kg-map-scroll::-webkit-scrollbar-corner { background: transparent; }
+@supports not selector(::-webkit-scrollbar) {
+    .kg-map-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--muted) 55%, transparent) transparent; }
+}
 .kg-board { position: relative; }
 .kg-lines { position: absolute; top: 0; left: 0; overflow: visible; }
 .kg-edge { --edge: var(--muted); }
@@ -40,9 +51,9 @@
 .kg-node { --tone: var(--accent); position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 4px; text-align: left;
     overflow: hidden; padding: 7px 11px; border: 1px solid var(--line); border-left: 4px solid var(--tone);
     border-radius: 9px; background: var(--card); box-shadow: var(--shadow); cursor: pointer; }
-.kg-node.insight { --tone: var(--insight); }
-.kg-node.formulation { --tone: var(--formulation); }
-.kg-node.theorem { --tone: var(--theorem); }
+.kg-node.kg-insight { --tone: var(--insight); }
+.kg-node.kg-formulation { --tone: var(--formulation); }
+.kg-node.kg-theorem { --tone: var(--theorem); }
 .kg-node.is-selected { outline: 2px solid var(--tone); outline-offset: 1px; }
 .kg-node:hover { border-color: var(--tone); }
 .kg-type { color: var(--tone); font-weight: 650; font-size: 10.5px; }

@@ -686,6 +686,59 @@ class ProblemGraph(PageTest):
         graph = self.saved()["knowledge"]
         self.assertEqual((graph["theorems"], graph["relations"]), ([], []))
 
+    def test_the_problem_is_drawn_where_the_arrows_to_its_insights_start(self):
+        page = self.page
+        page.see(".kg-node[data-node='problem']")        # the rule that hides the problem panel must not hide this node
+        gap = page.js("""() => {
+            const node = document.querySelector(".kg-node[data-node='problem']").getBoundingClientRect();
+            const lines = document.querySelector('.kg-lines').getBoundingClientRect();
+            return [...document.querySelectorAll('.kg-edge.observes .kg-stroke')].map(line => {
+                const start = line.getPointAtLength(0);
+                return Math.hypot(lines.left + start.x - node.right, lines.top + start.y - (node.top + node.height / 2));
+            });
+        }""")
+        self.assertEqual(len(gap), 2)                    # one arrow to each insight
+        self.assertLess(max(gap), 4)
+
+    def small_window(self):
+        """A window in which the diagram does not fit, so that it scrolls both ways."""
+        self.page.send("Emulation.setDeviceMetricsOverride", {"width": 600, "height": 420, "deviceScaleFactor": 1, "mobile": False})
+        # The page redraws the diagram for the new width one frame later. A click that straddles the redraw is lost.
+        self.page.js("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+        self.page.wait("""() => {
+            const map = document.querySelector('.kg-map-scroll');
+            return map.scrollWidth > map.clientWidth + 70 && map.scrollHeight > map.clientHeight + 70;
+        }""")
+
+    def at(self):
+        return self.page.js("() => { const m = document.querySelector('.kg-map-scroll'); return [m.scrollLeft, m.scrollTop]; }")
+
+    def test_a_drag_moves_the_diagram_and_selects_nothing(self):
+        page = self.page
+        self.small_window()
+        x, y = page.spot(".kg-node[data-node='I1']")     # pressing on a node is the hard case: its click would select it
+        page.mouse("Moved", x, y)
+        page.mouse("Pressed", x, y, 1)
+        for part in (0.3, 0.7, 1):
+            page.mouse("Moved", x - 60 * part, y - 50 * part, 1)
+        page.mouse("Released", x - 60, y - 50)
+        self.assertEqual(self.at(), [60, 50])
+        self.assertEqual(page.text(".kg-inspector h2"), "Problem")
+        page.click(".kg-node[data-node='I1']")           # a press that does not move is still a click
+        page.see(".kg-inspector h2", "Insight")
+        self.assertEqual(self.at(), [60, 50])            # and the redraw keeps the diagram where it was
+
+    def test_the_keyboard_scrolls_the_diagram_after_a_node_is_selected(self):
+        page = self.page
+        self.small_window()
+        page.click(".kg-node[data-node='I1']")
+        page.see(".kg-inspector h2", "Insight")
+        self.assertEqual(page.js("() => document.activeElement.dataset.node"), "I1")     # the redraw kept the focus
+        for kind in ("rawKeyDown", "keyUp"):
+            page.send("Input.dispatchKeyEvent", {"type": kind, "key": "ArrowDown", "code": "ArrowDown",
+                                                 "windowsVirtualKeyCode": 40, "nativeVirtualKeyCode": 40})
+        page.wait("() => document.querySelector('.kg-map-scroll').scrollTop > 0")
+
 
 class TheoryConnections(PageTest):
     def test_a_result_is_connected_to_an_insight_and_tried_in_a_fork(self):
