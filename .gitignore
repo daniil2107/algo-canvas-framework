@@ -1,0 +1,13 @@
+# Local canvas and research material
+/algorithm.json
+/theory/
+/.snapshots/
+/.algorithm-*.tmp
+
+# Local environment and generated files
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,3 @@
+[mcp_servers.algorithm_canvas]
+command = "python3"
+args = ["-B", "canvas_mcp.py"]

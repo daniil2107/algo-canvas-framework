@@ -1,0 +1,16 @@
+---
+name: canvas-explore-alternative
+description: Traverse Algorithm Canvas, decompose one research step, and use atomic decomposition and CMU morphological synthesis to propose one grounded alternative with explicit assumptions and a discriminating test.
+---
+
+# Explore one alternative
+
+Anchor the work in the requested version and stage. Use `read_canvas({})` and `read_stage({stage,block?,version?})` to obtain the effective problem, insights, chosen mechanism and constraints. Clarify an ambiguous target only if the canvas and the request leave materially different stages in scope.
+
+1. Read this repository’s [atomic decomposition skill](../atomic-decomposition/SKILL.md). Read [CMU’s morphological synthesis skill](../morphological-synthesis/SKILL.md) for the chart and compatibility assessment.
+2. Check the stage’s existing blocks and suggestions first. If the appropriate alternative is already present, inspect and develop that record in the response. Append a block only for a distinct mechanism. Traverse outward from the stage’s `because` and the current block’s `uses` via `read_graph({node,depth})`. Follow insights to relevant results, inspect combination claims, and consider comparable problem formulations. Check each connection’s status and source. Look up candidate mathematics with `search_cards`, then inspect the actual result with `read_card`.
+3. Isolate the operation to replace, along with its inputs, outputs, invariant and job. Apply atomic decomposition to the relevant formula, pseudocode and code when those are available. Use CMU’s chart to compare ways to perform the stage’s required functions. Use existing block IDs for known options. Include an adjacent stage only when the choices depend on each other. Check candidate combinations against input and output types, shared state, the results’ assumptions and the problem’s resource budget. Give a reason for each conflict and a test for unresolved combinations. Carry one candidate forward. Keep the route from the original insight to the result and design decision in your working notes.
+4. Propose **one** alternative for that operation. Give the replacement mechanism or equation, state the insight it uses, and specify what adjoining stages can continue to assume. Name a concrete benefit, the cost, any newly required condition, and the comparison that could reject it. Separate published evidence about the mathematical result from extrapolation to this problem. If the graph and paper offer insufficient support for a design option, identify the missing premise or result and give a targeted test.
+5. When asked to add it to the canvas, save the single block with `apply_research` using the current revision and an addressable `cardId` from `read_card` or from a source-grounded card imported in that same call. A raw paper title, DOI or URL alone cannot serve as block evidence. Reuse the selected stage and insight IDs. The original design and version picks stay available for comparison. A revision conflict requires rereading before appending. For analysis alone, return the alternative without a mutation.
+
+Return the stage and current choice, a short graph path with source locations, the alternative, and its falsification test. Report which external skills actually ran.

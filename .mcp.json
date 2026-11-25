@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "algorithm_canvas": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-B", "canvas_mcp.py"]
+    }
+  }
+}

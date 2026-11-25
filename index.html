@@ -1,0 +1,1058 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Algorithm Canvas</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<style>
+/* ===========================================
+   ALGORITHM CANVAS
+   One page, no build step. State lives in algorithm.json (see server.py).
+   Layout: top bar / problem panel (left) / pannable canvas / detail panel (overlay).
+   =========================================== */
+:root {
+  --bg: #f3f2ee; --dot: #d3d1c8; --card: #ffffff; --ink: #1d1d1b; --muted: #6f6d66; --line: #dcdad2;
+  --accent: #2f5bea; --warn: #b4540a;
+  --shadow: 0 1px 2px rgba(20, 20, 10, .06), 0 6px 18px rgba(20, 20, 10, .06);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151517; --dot: #2c2c31; --card: #1f1f23; --ink: #ededeb; --muted: #9c9ba3; --line: #34343b;
+    --accent: #8aa4ff; --warn: #f0a44b;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 22px rgba(0, 0, 0, .35);
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; font: 13px/1.45 var(--font); color: var(--ink); background: var(--bg); overflow: hidden; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.katex { font-size: 1.04em; }
+
+/* --- top bar --- */
+.bar { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--card); }
+.bar .title { font-weight: 600; font-size: 14px; min-width: 120px; max-width: 46vw; }
+.bar .title .ed-view { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spacer { flex: 1; }
+.status { color: var(--muted); font-size: 12px; min-width: 70px; text-align: right; white-space: nowrap; }
+.btn { height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.sq { width: 28px; padding: 0; }
+.btn.mini { height: 22px; padding: 0 7px; font-size: 11px; border-radius: 6px; }
+.btn.wide { width: 100%; margin-top: 8px; }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--card); border-color: var(--ink); }
+
+/* --- problem panel: the objective and the insights stay on screen --- */
+.app { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: calc(100% - 44px); position: relative; }
+.app.no-problem { grid-template-columns: minmax(0, 1fr); }
+.app.no-problem .problem { display: none; }
+.problem { overflow: auto; padding: 14px 14px 24px; border-right: 1px solid var(--line); background: var(--card); }
+.problem h2 { margin: 18px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.problem h2:first-child { margin-top: 0; }
+.hint { color: var(--muted); font-size: 11.5px; }
+p.hint { margin: 0 0 8px; }
+.insight { padding: 8px 0 6px; border-top: 1px solid var(--line); }
+.insight.focus, .part.focus { box-shadow: inset 3px 0 0 var(--accent); padding-left: 9px; }
+.insight.rel .insight-head .chip, .part.rel .insight-head .chip { outline: 2px solid var(--accent); outline-offset: 1px; }
+.insight-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.insight-head .hint { flex: 1; }
+
+/* --- click-to-edit text: shows rendered maths, turns into a textarea on click --- */
+.ed { cursor: text; border-radius: 6px; }
+.ed-view { margin: 0 -6px; padding: 3px 6px; border-radius: 6px; min-height: 1.45em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ed:hover .ed-view { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+.ed-view.empty { color: var(--muted); }
+.ed-input { display: block; width: calc(100% + 12px); margin: 0 -6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: 6px; font: inherit; color: inherit; background: var(--card); resize: none; overflow: hidden; outline: none; }
+.ed.small { font-size: 12px; color: var(--muted); }
+.ed.big { font-size: 16px; font-weight: 600; }
+
+/* --- canvas --- */
+.viewport { position: relative; overflow: hidden; background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1.3px); cursor: grab; touch-action: none; }
+.viewport.panning { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; user-select: none; -webkit-user-select: none; }
+.links { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; color: var(--muted); }
+.links line { stroke: currentColor; stroke-width: 1.5; }
+.empty-hint { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 340px; text-align: center; color: var(--muted); }
+
+.frame { position: absolute; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); cursor: default; }
+.frame.sel { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 35%, transparent), var(--shadow); }
+.frame.moving { opacity: .92; }
+.frame-head { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px 8px; cursor: grab; border-radius: 12px 12px 0 0; }
+.num { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--hue); color: #fff; font-weight: 600; font-size: 12px; display: grid; place-items: center; }
+.head-text { flex: 1; min-width: 0; max-width: 430px; }
+.name { font-weight: 600; overflow-wrap: anywhere; }
+.job { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+/* a stage: one line of the algorithm with every block that could fill it */
+.shelf { width: max-content; min-width: 320px; max-width: 900px; }
+.shelf-body { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 12px 12px; align-items: stretch; }
+.block { position: relative; width: 196px; padding: 7px 9px 8px; border: 1px solid color-mix(in oklab, var(--hue) 40%, var(--line)); border-left: 4px solid var(--hue); border-radius: 8px; background: color-mix(in oklab, var(--hue) 8%, var(--card)); cursor: grab; }
+.block .does { margin-top: 2px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.block .chips { margin-top: 6px; }
+.block.sel { box-shadow: 0 0 0 2px var(--accent); }
+.block.suggested { border-style: dashed; border-left-style: solid; }
+.tag { float: right; margin-left: 6px; font-size: 10px; font-weight: 600; letter-spacing: .03em; color: var(--warn); }
+.add-block { width: 36px; min-height: 44px; border: 1.5px dashed var(--line); border-radius: 8px; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
+.add-block:hover { border-color: var(--muted); color: var(--ink); }
+
+/* a version: one block per stage, read top to bottom */
+.version { width: 264px; }
+.slot { padding: 0 10px 8px; }
+.slot-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 3px; font-size: 11px; color: var(--muted); }
+.delta { color: var(--warn); font-weight: 600; }
+.slot-fill { position: relative; }
+.slot-fill .block { width: auto; padding-right: 22px; }
+.slot-fill .x { position: absolute; top: 3px; right: 3px; opacity: 0; }
+.slot-fill:hover .x, .slot-fill .x:focus-visible { opacity: 1; }
+.slot-empty { border: 1.5px dashed var(--line); border-radius: 8px; padding: 9px; color: var(--muted); font-size: 12px; text-align: center; }
+.dropping .slot.target .slot-empty, .dropping .slot.target .block { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.dropping .version.over { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 35%, transparent), var(--shadow); }
+.cover { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 2px; padding: 7px 10px 9px; border-top: 1px solid var(--line); }
+
+.x { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+.x:hover { background: color-mix(in oklab, var(--ink) 10%, transparent); color: var(--ink); }
+.chip { height: 18px; padding: 0 6px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--muted); font: 600 10.5px/16px var(--font); cursor: pointer; }
+.chip.on { background: color-mix(in oklab, var(--ink) 82%, var(--card)); border-color: transparent; color: var(--card); }
+.chip.miss { border-style: dashed; border-color: var(--warn); color: var(--warn); }
+.chip.focus { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip:disabled { opacity: .45; cursor: default; }
+/* an insight is in focus: fade whatever does not rely on it */
+.focusing .block:not(.hit), .focusing .shelf .frame-head:not(.hit) > *, .focusing .slot-empty { opacity: .28; }
+.focusing .block.hit { box-shadow: 0 0 0 2px var(--accent); }
+
+.ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; max-width: 240px; padding: 6px 10px; border-left: 4px solid var(--hue); border-radius: 8px; background: var(--card); box-shadow: var(--shadow); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- overlays on the canvas --- */
+.zoom { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 2px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); cursor: default; }
+.zoom .btn { border-color: transparent; }
+/* the objective stays on the canvas when the problem panel is closed */
+.goal { position: absolute; left: 12px; top: 12px; z-index: 4; display: flex; align-items: flex-start; gap: 8px; max-width: min(760px, calc(100% - 24px)); padding: 6px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); cursor: pointer; }
+.goal:hover { border-color: var(--muted); }
+.goal .label { flex: none; margin: 2px 0 0; }
+.goal-text { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.goal .chips { flex: none; flex-wrap: nowrap; margin-top: 1px; }
+.banner { position: absolute; left: 50%; top: 58px; transform: translateX(-50%); z-index: 6; width: max-content; max-width: min(560px, 90%); padding: 8px 12px; background: var(--card); border: 1px solid var(--warn); border-radius: 10px; box-shadow: var(--shadow); cursor: default; }
+.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 10px; max-width: 90vw; padding: 8px 14px; border-radius: 10px; background: var(--ink); color: var(--card); }
+.toast .btn { background: transparent; color: inherit; border-color: color-mix(in oklab, var(--card) 55%, transparent); }
+.detail { position: absolute; top: 12px; right: 12px; z-index: 5; width: 344px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow: auto; padding: 12px 14px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); cursor: default; }
+.detail-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.kind { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--muted); }
+.field { margin-top: 12px; }
+.label { margin-bottom: 2px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.review { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 8px; border: 1px dashed var(--warn); border-radius: 8px; font-size: 12px; }
+.review span { flex: 1; }
+.ev { display: flex; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line); }
+.ev-main { flex: 1; min-width: 0; }
+.ev-main .ed:first-child { color: var(--ink); }
+.ev-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 11px; }
+.ev-side a { color: var(--accent); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.check { display: flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 12px; }
+.argument { font-size: 12.5px; }
+.argument .aim { margin: 4px 0 8px; color: var(--muted); }
+.argument ol { margin: 0; padding-left: 18px; }
+.argument li { margin-bottom: 8px; }
+.argument .pick { margin-top: 2px; padding-left: 8px; border-left: 2px solid var(--line); }
+.argument .pick.none, .argument .gap { color: var(--warn); }
+.argument .gap { margin: 8px 0 0; }
+.argument .chip { vertical-align: 1px; }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .problem { position: absolute; z-index: 20; top: 0; bottom: 0; left: 0; width: min(320px, 88vw); box-shadow: var(--shadow); }
+  .bar .title { max-width: 30vw; }
+}
+</style>
+<link rel="stylesheet" href="/flow.css">
+<link rel="stylesheet" href="/knowledge-ui.css">
+<link rel="stylesheet" href="/connections-ui.css">
+</head>
+<body>
+
+<header class="bar">
+  <nav class="view-switch" aria-label="Canvas views">
+    <button class="btn view-control" id="algorithmView" type="button" aria-pressed="true">Algorithm</button>
+    <button class="btn view-control" id="graphView" type="button" aria-pressed="false">Problem graph</button>
+  </nav>
+  <button class="btn view-control" id="researchGuide" type="button">Research</button>
+  <button class="btn" id="toggleProblem" type="button" aria-pressed="true">Problem</button>
+  <div class="title" id="title"></div>
+  <span class="spacer"></span>
+  <label class="flow-toolbar"><span>Flow</span><select id="flow-scope" aria-label="Displayed flow"></select></label>
+  <button class="btn" id="addStage" type="button">+ Stage</button>
+  <button class="btn" id="addVersion" type="button">+ Version</button>
+  <span class="status" id="status" role="status"></span>
+</header>
+
+<div class="app" id="app">
+  <aside class="problem" id="problem" aria-label="Problem"></aside>
+  <main class="viewport" id="viewport">
+    <div class="world" id="world">
+      <svg class="links" id="links" aria-hidden="true"></svg>
+      <div id="frames"></div>
+    </div>
+    <div class="empty-hint" id="emptyHint" hidden>Write what you are optimizing in the Problem panel, then add the lines of the algorithm with <b>+ Stage</b>.</div>
+    <div class="goal" id="goal" role="button" tabindex="0" title="Open the problem panel" hidden></div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="zoom" role="group" aria-label="Canvas view">
+      <button class="btn sq" id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
+      <button class="btn" id="zoomPct" type="button" title="Back to 100%">100%</button>
+      <button class="btn sq" id="zoomIn" type="button" aria-label="Zoom in">+</button>
+      <button class="btn" id="fit" type="button" title="Show everything">Fit</button>
+      <button class="btn" id="tidy" type="button" title="Go back to the automatic layout">Tidy</button>
+    </div>
+    <aside class="detail" id="detail" aria-label="Details" hidden></aside>
+  </main>
+  <main id="knowledgeHost" aria-label="Problem graph" hidden></main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+<script src="/flow.js"></script>
+<script src="/knowledge-ui.js"></script>
+<script src="/connections-ui.js"></script>
+<script>
+'use strict';
+/* ===========================================
+   DATA MODEL (the whole of algorithm.json)
+   problem   { objective, setting }
+   insights  [{ id: "I1", text, basis }]            facts about the problem
+   stages    [{ id, name, job, because: [reason] }]  the lines of the algorithm, in order
+   blocks    [{ id, stage, name, does, why, uses: [reason], costs, evidence: [{source, where, says}], status }]
+   versions  [{ id, name, pick: { stageId: blockId }, notes, baseline }]
+   A reason is an insight id, or one of the reserved ids "objective" and "setting", which cite the problem itself.
+   Stages and versions carry x, y only once the user has arranged the canvas by hand.
+   =========================================== */
+const HUES = ['#3b6fd4', '#c7791a', '#2f8f5b', '#c2447a', '#7a56c8', '#1f8c8c', '#c2503a', '#5f6b7a'];
+const VIEW_KEY = 'algo-canvas-view';
+const PROBLEM_PARTS = new Map([['objective', 'Objective'], ['setting', 'Setting']]);   // reserved reason ids and their labels
+const emptyState = () => ({ meta: { title: 'Untitled algorithm' }, problem: { objective: '', setting: '' }, knowledge: {formulations:[], theorems:[], relations:[]}, insights: [], stages: [], blocks: [], versions: [] });
+
+let S = emptyState();
+let rev = null;            // revision of the file on disk that S was loaded from or last saved as
+let online = false;        // server.py reachable
+let diskBroken = false;    // the file on disk is not valid JSON
+let dirty = false, saving = false, busyDrag = false;
+let refused = '';          // why the server would not take the last save, while that is unresolved
+let saveTimer = 0, worldTimer = 0, toastTimer = 0;
+const ui = { sel: null, focus: null, view: { x: 40, y: 30, k: 1 }, restored: false };
+
+/* ---------- small helpers ---------- */
+const $ = id => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null || v === false) continue;
+        if (k === 'class') n.className = v;
+        else if (k === 'style') n.style.cssText = v;
+        else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+        else n.setAttribute(k, v === true ? '' : v);
+    }
+    for (const kid of kids.flat(4)) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    return n;
+}
+function put(parent, ...kids) { for (const kid of kids.flat(4)) if (kid != null && kid !== false) parent.append(kid); }
+const byId = (list, id) => list.find(o => o.id === id) || null;
+const uid = p => p + '-' + Math.random().toString(36).slice(2, 8);
+const hueAt = i => HUES[(i < 0 ? HUES.length - 1 : i) % HUES.length];
+const hueOf = stageId => hueAt(S.stages.findIndex(s => s.id === stageId));
+const isSel = (type, id, versionId) => !!ui.sel && ui.sel.type === type && ui.sel.id === id && (ui.sel.versionId || null) === (versionId || null);
+const baseline = () => S.versions.find(v => v.baseline) || null;
+const pickOf = effectiveBlock;
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const stop = e => e.stopPropagation();
+function usedBy(v) {
+    const out = new Set();
+    for (const s of stagesFor(v)) { const b = pickOf(v, s); if (b) b.uses.forEach(i => out.add(i)); }
+    return out;
+}
+function currentItem() {
+    if (!ui.sel) return null;
+    if (ui.sel.versionId) {
+        const v = versionById(ui.sel.versionId);
+        if (!v) return null;
+        if (ui.sel.type === 'stage') return byId(stagesFor(v), ui.sel.id);
+        const s = stagesFor(v).find(st => v.pick[st.id] === ui.sel.id);
+        return s ? pickOf(v, s) : null;
+    }
+    const list = ui.sel.type === 'block' ? S.blocks : ui.sel.type === 'stage' ? S.stages : S.versions;
+    return byId(list, ui.sel.id);
+}
+function typeset(node) {
+    if (!window.renderMathInElement) return;
+    try {
+        window.renderMathInElement(node, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], throwOnError: false });
+    } catch (e) { /* leave the raw text */ }
+}
+function toast(msg) {
+    undoSnapshot = null;
+    const t = $('toast'); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 3400);
+}
+/* ---------- undo for deletions ----------
+   The page never asks through a native dialog: the Claude Browser pane answers those with "no" without showing them,
+   which silently cancelled every delete. A deletion happens at once and can be taken back until the next edit. */
+let undoSnapshot = null;
+function clearUndo() {
+    if (!undoSnapshot) return;
+    undoSnapshot = null; clearTimeout(toastTimer); $('toast').hidden = true;
+}
+function offerUndo(message, before) {
+    undoSnapshot = before;
+    const t = $('toast'); t.textContent = '';
+    t.append(message, h('button', { class: 'btn mini', type: 'button', onclick: undo }, 'Undo'));
+    t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(clearUndo, 10000);
+}
+function undo() {
+    if (!undoSnapshot) return;
+    const before = undoSnapshot;
+    clearUndo();
+    S = normalize(JSON.parse(before));
+    touch(true);
+}
+function normalize(d) {
+    const s = Object.assign(emptyState(), d || {});
+    s.meta = Object.assign({ title: 'Untitled algorithm' }, s.meta);
+    s.problem = Object.assign({ objective: '', setting: '' }, s.problem);
+    for (const k of ['insights', 'stages', 'blocks', 'versions']) if (!Array.isArray(s[k])) s[k] = [];
+    s.knowledge = Object.assign({formulations:[], theorems:[], relations:[]}, s.knowledge);
+    s.stages.forEach(x => { if (!Array.isArray(x.because)) x.because = []; });
+    s.blocks.forEach(x => { if (!Array.isArray(x.uses)) x.uses = []; if (!Array.isArray(x.evidence)) x.evidence = []; });
+    s.versions.forEach(x => { if (!x.pick || typeof x.pick !== 'object') x.pick = {}; });
+    return s;
+}
+
+/* ===========================================
+   SYNC WITH algorithm.json
+   Every edit is saved half a second later. The file is also polled, so edits made on disk
+   (by a model or by hand) show up here. If both sides changed, the disk wins and we reload.
+   =========================================== */
+async function load(initial) {
+    try {
+        const r = await fetch('/api/state', { cache: 'no-store' });
+        online = true;
+        rev = r.headers.get('X-Rev');
+        if (r.status === 422) { diskBroken = true; }
+        else if (!r.ok) throw new Error('HTTP ' + r.status);
+        else { S = normalize(await r.json()); diskBroken = false; dirty = false; undoSnapshot = null; refused = ''; }
+    } catch (e) {
+        online = false;
+        if (initial) S = emptyState();
+    }
+    showBanner(); renderAll();
+    return online && !diskBroken;
+}
+function touch(structural) {
+    commitInspectorEdit();
+    clearUndo();
+    if (refused) { refused = ''; showBanner(); }          // a new edit gets a new attempt
+    dirty = true; setStatus();
+    clearTimeout(saveTimer); saveTimer = setTimeout(save, 500);
+    if (structural) renderAll(); else renderWorldSoon();
+}
+async function save(force) {
+    if (!online || (diskBroken && force !== true)) { setStatus(); return; }
+    if (saving) { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); return; }
+    saving = true; setStatus();
+    const body = JSON.stringify(S);
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (force !== true && rev) headers['If-Match'] = rev;
+        const r = await fetch('/api/state', { method: 'PUT', headers, body });
+        if (r.status === 409) {
+            saving = false;
+            toast('The file changed on disk, so it was reloaded. Redo your last edit.');
+            await load();
+            return;
+        }
+        if (!r.ok) {                                   // the server answered, and it will not take this state
+            let reason = 'HTTP ' + r.status;
+            try { reason = (await r.json()).error || reason; } catch (e) { /* keep the status code */ }
+            refused = reason; saving = false; setStatus(); showBanner();
+            return;                                    // sending the same state again cannot help: wait for the next edit
+        }
+        rev = (await r.json()).rev; diskBroken = false; refused = '';
+        if (JSON.stringify(S) === body) dirty = false;
+    } catch (e) { online = false; }
+    saving = false; setStatus(); showBanner();
+    if (dirty && online) { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); }
+}
+async function poll() {
+    try {
+        const r = await fetch('/api/rev', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        if (!online) {
+            online = true;
+            if (!rev) { await load(); return; }       // the page never had the real state: take it from disk
+            setStatus(); showBanner();
+            if (dirty) save();
+        }
+        if (j.rev !== rev && !dirty && !saving && !busyDrag) {
+            if (await load()) toast('Updated from the file on disk.');
+        }
+    } catch (e) {
+        if (online) { online = false; setStatus(); showBanner(); }
+    }
+}
+function setStatus() {
+    $('status').textContent = !online ? 'Not connected' : diskBroken ? 'File is invalid' : refused ? 'Not saved' : saving ? 'Saving…' : dirty ? 'Unsaved' : 'Saved';
+}
+function showBanner() {
+    const b = $('banner'); b.textContent = '';
+    if (!online) {
+        b.hidden = false;
+        b.append('Not connected to server.py, so changes are not saved. Start it with: python3 server.py');
+    } else if (diskBroken) {
+        b.hidden = false;
+        b.append('algorithm.json on disk is not valid JSON. Fix the file, or ',
+            h('button', { class: 'btn mini', type: 'button', onclick: () => save(true) }, 'overwrite it with this view'), '.');
+    } else if (refused) {
+        b.hidden = false;
+        b.append('This change was not saved. The server refused it: ' + refused + '. Change the item it names, or ',
+            h('button', { class: 'btn mini', type: 'button', onclick: () => { refused = ''; dirty = false; load(); } }, 'go back to the saved version'), '.');
+    } else b.hidden = true;
+}
+
+/* ===========================================
+   CLICK-TO-EDIT TEXT
+   =========================================== */
+function editable(get, set, o = {}) {
+    const label = o.label || o.placeholder || 'Text';
+    const box = h('div', { class: 'ed ' + (o.cls || ''), tabindex: '0', role: 'textbox', 'aria-label': label });
+    function show() {
+        const v = get() || '';
+        box.textContent = '';
+        const view = h('div', { class: 'ed-view' + (v ? '' : ' empty') }, v || o.placeholder || 'Click to write');
+        box.append(view);
+        if (v) typeset(view);
+    }
+    function edit() {
+        if (box.querySelector('textarea')) return;
+        const ta = h('textarea', { class: 'ed-input', rows: '1', 'aria-label': label });
+        ta.value = get() || '';
+        box.textContent = ''; box.append(ta);
+        const size = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
+        ta.addEventListener('input', () => { set(o.single ? ta.value.replace(/\n/g, ' ') : ta.value); size(); touch(false); });
+        ta.addEventListener('blur', show);
+        ta.addEventListener('keydown', e => {
+            e.stopPropagation();
+            if (e.key === 'Escape' || (e.key === 'Enter' && (o.single || e.metaKey || e.ctrlKey))) { e.preventDefault(); ta.blur(); }
+        });
+        ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); size();
+    }
+    box.addEventListener('click', edit);
+    box.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === box) { e.preventDefault(); edit(); } });
+    show();
+    return box;
+}
+
+/* ===========================================
+   RENDERING
+   =========================================== */
+function renderAll() {
+    renderBar(); renderProblem(); renderWorld(); renderDetail(); setStatus();
+    if (!$('knowledgeHost').hidden) renderKnowledgeGraph($('knowledgeHost'));
+}
+function setCanvasView(graph, id) {
+    const host = $('knowledgeHost');
+    if (graph && ui.sel) select(null);
+    host.hidden = !graph; $('viewport').hidden = graph;
+    $('algorithmView').setAttribute('aria-pressed',String(!graph));
+    $('graphView').setAttribute('aria-pressed',String(graph));
+    $('app').classList.toggle('graph-open',graph);
+    document.body.classList.toggle('graph-mode',graph);
+    if (graph) { renderKnowledgeGraph(host); if (id) selectKnowledgeNode(id); }
+    else { renderAll(); requestAnimationFrame(renderWorld); }
+}
+function showGraphFor(id) { setCanvasView(true,id); }
+function showAlgorithmFor(id) { ui.focus=id; setCanvasView(false); }
+
+function renderWorldSoon() { clearTimeout(worldTimer); worldTimer = setTimeout(renderWorld, 120); }
+
+function renderBar() {
+    renderFlowPicker();
+    const t = $('title'); t.textContent = '';
+    const setDocTitle = () => { document.title = (S.meta.title || 'Untitled algorithm') + ' · Algorithm Canvas'; };
+    t.append(editable(() => S.meta.title, v => { S.meta.title = v; setDocTitle(); }, { placeholder: 'Untitled algorithm', single: true, label: 'Title' }));
+    setDocTitle();
+}
+
+/* A reason, as a chip: an insight by its id, or the objective or the setting of the problem by name. */
+function chip(id, o = {}) {
+    const part = PROBLEM_PARTS.get(id), ins = part ? null : byId(S.insights, id);
+    return h('button', {
+        class: 'chip' + (o.on ? ' on' : '') + (o.miss ? ' miss' : '') + (ui.focus === id ? ' focus' : ''),
+        type: 'button', disabled: o.disabled,
+        title: o.title || (part ? S.problem[id] || `The ${id} is not written yet` : ins ? ins.text : 'This insight no longer exists'),
+        'aria-label': part ? `The ${id} of the problem` : 'Insight ' + id,
+        onpointerdown: stop, onclick: o.onclick || (e => { e.stopPropagation(); setFocus(id); }),
+    }, part || id);
+}
+function setFocus(id) { ui.focus = ui.focus === id ? null : id; renderProblem(); renderWorld(); }
+
+function renderProblem() {
+    const p = $('problem'); p.textContent = '';
+    const cur = currentItem();
+    const rel = !cur ? [] : ui.sel.type === 'block' ? cur.uses : ui.sel.type === 'stage' ? cur.because : [...usedBy(cur)];
+    const marks = id => (ui.focus === id ? ' focus' : '') + (rel.includes(id) ? ' rel' : '');
+    const citedBy = id => `${plural(S.stages.filter(s => s.because.includes(id)).length, 'stage')}, ${plural(S.blocks.filter(b => b.uses.includes(id)).length, 'block')}`;
+    const part = (id, text) => h('div', { class: 'part' + marks(id) },
+        h('div', { class: 'insight-head' }, chip(id, { on: true }), h('span', { class: 'hint' }, citedBy(id))), text);
+    put(p,
+        h('h2', {}, 'What we are optimizing'),
+        part('objective', editable(() => S.problem.objective, v => { S.problem.objective = v; }, { placeholder: 'State the objective in one or two sentences.', label: 'Objective' })),
+        h('h2', {}, 'Setting and constraints'),
+        part('setting', editable(() => S.problem.setting, v => { S.problem.setting = v; }, { placeholder: 'What can we observe or compute, and what is too expensive?', label: 'Setting' })),
+        h('h2', {}, 'Insights about the problem'),
+        h('p', { class: 'hint' }, 'Every stage and block should point back to one of these, or to the objective or the setting above. Click an id to see where it is used.'));
+    for (const ins of S.insights) {
+        p.append(h('div', { class: 'insight' + marks(ins.id) },
+            h('div', { class: 'insight-head' },
+                chip(ins.id, { on: true }),
+                h('span', { class: 'hint' }, citedBy(ins.id)),
+                flowButton('View in graph', () => showGraphFor(ins.id)),
+                h('button', { class: 'x', type: 'button', 'aria-label': 'Delete insight ' + ins.id, onclick: () => delInsight(ins.id) }, '×')),
+            editable(() => ins.text, v => { ins.text = v; }, { placeholder: 'What is true about the problem?', label: 'Insight ' + ins.id }),
+            editable(() => ins.basis, v => { ins.basis = v; }, { placeholder: 'How do we know? (observation, theorem, source)', cls: 'small', label: 'Basis of ' + ins.id })));
+    }
+    p.append(h('button', { class: 'btn wide', type: 'button', onclick: addInsight }, '+ Insight'));
+    renderGoal();
+}
+/* One line with the objective and the insight ids, shown on the canvas while the problem panel is closed. */
+function renderGoal() {
+    const g = $('goal'); g.textContent = '';
+    g.hidden = !$('app').classList.contains('no-problem');
+    const text = h('span', { class: 'goal-text' + (S.problem.objective ? '' : ' hint') }, S.problem.objective || 'Write what you are optimizing');
+    g.append(h('span', { class: 'label' }, 'Optimizing'), text, h('span', { class: 'chips' }, S.insights.map(ins => chip(ins.id, { on: true }))));
+    typeset(text);
+}
+
+function blockEl(b, compact, versionId) {
+    const hit = !!ui.focus && b.uses.includes(ui.focus);
+    return h('div', {
+        class: 'block' + (b.status === 'suggested' ? ' suggested' : '') + (isSel('block', b.id, versionId) ? ' sel' : '') + (hit ? ' hit' : ''),
+        'data-id': b.id, 'data-version': versionId, style: `--hue:${hueOf(b.stage)}`, tabindex: '0', role: 'button', 'aria-label': 'Block: ' + (b.name || 'unnamed'),
+    },
+        ['suggested','trial'].includes(b.status) ? h('span', { class: 'tag' }, b.status) : null,
+        h('div', { class: 'name' }, b.name || 'Unnamed block'),
+        b.does ? h('div', { class: 'does' }, b.does) : null,
+        !compact && b.uses.length ? h('div', { class: 'chips' }, b.uses.map(id => chip(id))) : null);
+}
+
+function renderWorld() {
+    const frames = $('frames'); frames.textContent = '';
+    $('world').classList.toggle('focusing', !!ui.focus);
+    $('emptyHint').hidden = S.stages.length + S.versions.length > 0;
+    const base = baseline();
+
+    const active = activeFlowVersion();
+    stagesFor(active).forEach((s, i) => {
+        const hit = !!ui.focus && s.because.includes(ui.focus);
+        frames.append(h('section', { class: 'frame shelf' + (isSel('stage', s.id, active?.id) ? ' sel' : ''), 'data-kind': 'stage', 'data-id': s.id, style: `--hue:${hueAt(i)}` },
+            h('header', { class: 'frame-head' + (hit ? ' hit' : '') },
+                h('span', { class: 'num' }, String(i + 1)),
+                h('div', { class: 'head-text' },
+                    h('div', { class: 'name' }, s.name || 'Unnamed stage'),
+                    h('div', { class: 'job' }, s.job || 'What does this stage do for the objective?')),
+                h('div', { class: 'chips' }, s.because.map(id => chip(id)))),
+            h('div', { class: 'shelf-body' },
+                S.blocks.filter(b => b.stage === s.id).map(b => blockEl(b, false)),
+                h('button', { class: 'add-block', type: 'button', title: 'Add a block to this stage', 'aria-label': 'Add a block to stage ' + (i + 1), onpointerdown: stop, onclick: () => newBlockDialog(s.id,active) }, '+')),
+            branchLinks(active,s)));
+    });
+
+    S.versions.forEach(v => {
+        const used = usedBy(v);
+        const anyMissing = S.insights.some(ins => !used.has(ins.id));
+        frames.append(h('section', { class: 'frame version' + (isSel('version', v.id) ? ' sel' : ''), 'data-kind': 'version', 'data-id': v.id },
+            h('header', { class: 'frame-head' },
+                h('div', { class: 'head-text' },
+                    h('div', { class: 'name' }, v.name || 'Unnamed version'),
+                    v.baseline ? h('div', { class: 'job' }, 'Baseline') : null,
+                    base && base !== v && !sameFlow(flowFor(v),flowFor(base)) ? h('div',{class:'delta'},'Flow changed') : null),
+                h('button', { class: 'btn mini', type: 'button', title: 'Copy this version so you can change it', onpointerdown: stop, onclick: () => forkVersion(v.id) }, 'Fork')),
+            stagesFor(v).map((s, i) => {
+                const b = pickOf(v, s);
+                const changed = !!base && base !== v && stageChanged(v, s, base);
+                return h('div', { class: 'slot', 'data-stage': s.id, style: `--hue:${hueAt(i)}` },
+                    h('div', { class: 'slot-label' }, h('button', {class:'slot-stage-button',type:'button',onpointerdown:stop,onclick:()=>select('stage',s.id,v.id)}, `${i + 1} · ${s.name || 'Unnamed stage'}`), changed ? h('span', { class: 'delta' }, 'changed') : null),
+                    b ? h('div', { class: 'slot-fill' }, blockEl(b, true, v.id),
+                            h('button', { class: 'x', type: 'button', 'aria-label': 'Take this block out of the version', onpointerdown: stop, onclick: () => removePick(v,s.id) }, '×'))
+                      : h('div', { class: 'slot-empty' }, 'Drop a block from stage ' + (i + 1)));
+            }),
+            S.insights.length ? h('footer', { class: 'cover' },
+                S.insights.map(ins => chip(ins.id, { on: used.has(ins.id), miss: !used.has(ins.id) })),
+                anyMissing ? h('span', { class: 'hint' }, 'dashed: not used') : null) : null));
+    });
+
+    typeset(frames);
+    placeFrames(); drawLinks(); applyView();
+}
+
+/* Where each frame is drawn. Until you move a frame the layout is automatic: stages stack downwards and versions
+   line up to the right of them (below them on a narrow canvas). Moving a frame keeps every frame where it is
+   from then on; anything added later appears to the right of the rest. Tidy returns to the automatic layout. */
+const pos = new Map();
+const frameKey = e => e.dataset.kind + ':' + e.dataset.id;
+const frameItem = e => byId(e.dataset.kind === 'stage' ? S.stages : S.versions, e.dataset.id);
+const isPlaced = it => Number.isFinite(it.x) && Number.isFinite(it.y);
+function placeFrames() {
+    const els = [...$('frames').children];
+    pos.clear();
+    const placed = els.filter(e => isPlaced(frameItem(e)));
+    if (placed.length) {
+        let x = Math.max(...placed.map(e => frameItem(e).x + e.offsetWidth)) + 48;
+        const y = Math.min(...placed.map(e => frameItem(e).y));
+        for (const e of els) {
+            const it = frameItem(e);
+            if (isPlaced(it)) pos.set(frameKey(e), { x: it.x, y: it.y });
+            else { pos.set(frameKey(e), { x, y }); x += e.offsetWidth + 24; }
+        }
+    } else {
+        let y = 40, right = 40, bottom = 40;
+        for (const e of els) if (e.dataset.kind === 'stage') {
+            pos.set(frameKey(e), { x: 40, y });
+            right = Math.max(right, 40 + e.offsetWidth); bottom = y + e.offsetHeight; y = bottom + 36;
+        }
+        const below = $('viewport').clientWidth < 900;
+        let x = below ? 40 : right + 80;
+        const vy = below ? bottom + 64 : 40;
+        for (const e of els) if (e.dataset.kind === 'version') { pos.set(frameKey(e), { x, y: vy }); x += e.offsetWidth + 24; }
+    }
+    for (const e of els) { const q = pos.get(frameKey(e)); e.style.left = q.x + 'px'; e.style.top = q.y + 'px'; }
+}
+function freezeLayout() {
+    for (const e of $('frames').children) { const it = frameItem(e), q = pos.get(frameKey(e)); if (it && q) { it.x = q.x; it.y = q.y; } }
+}
+
+function drawLinks() { drawFlowLinks(); }
+
+/* ---------- canvas view: pan and zoom ---------- */
+function applyView() {
+    const { x, y, k } = ui.view;
+    $('world').style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+    const vp = $('viewport');
+    vp.style.backgroundSize = `${24 * k}px ${24 * k}px`;
+    vp.style.backgroundPosition = `${x}px ${y}px`;
+    $('zoomPct').textContent = Math.round(k * 100) + '%';
+    try { localStorage.setItem(VIEW_KEY, JSON.stringify(ui.view)); } catch (e) { /* view is a convenience only */ }
+}
+function zoomAt(cx, cy, k2) {
+    const v = ui.view; k2 = Math.max(0.2, Math.min(2, k2));
+    v.x = cx - (cx - v.x) * k2 / v.k; v.y = cy - (cy - v.y) * k2 / v.k; v.k = k2;
+    applyView();
+}
+function zoomCentre(factor, absolute) {
+    const vp = $('viewport');
+    zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, absolute || ui.view.k * factor);
+}
+function fit() {
+    const els = [...$('frames').children], vp = $('viewport');
+    if (!els.length) { ui.view = { x: 40, y: 30, k: 1 }; applyView(); return; }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const e of els) {
+        x0 = Math.min(x0, e.offsetLeft); y0 = Math.min(y0, e.offsetTop);
+        x1 = Math.max(x1, e.offsetLeft + e.offsetWidth); y1 = Math.max(y1, e.offsetTop + e.offsetHeight);
+    }
+    const pad = 24, top = topInset(), w = x1 - x0, hgt = y1 - y0;
+    const k = Math.max(0.2, Math.min(1, (vp.clientWidth - 2 * pad) / w, (vp.clientHeight - top - pad) / hgt));
+    ui.view = { k, x: Math.max(pad, (vp.clientWidth - w * k) / 2) - x0 * k, y: Math.max(top, (vp.clientHeight - hgt * k) / 2) - y0 * k };
+    applyView();
+}
+const topInset = () => ($('goal').hidden ? 20 : $('goal').offsetHeight + 28);       // keep clear of the objective line
+/* The view a file opens with: everything if that is readable, otherwise the stages at the width of the canvas, to scroll through. */
+function startView() {
+    fit();
+    const els = [...$('frames').children];
+    if (!els.length || ui.view.k >= 0.5) return;
+    const shelves = els.filter(e => e.dataset.kind === 'stage'), ref = shelves.length ? shelves : els;
+    const x0 = Math.min(...ref.map(e => e.offsetLeft)), y0 = Math.min(...els.map(e => e.offsetTop));
+    const w = Math.max(...ref.map(e => e.offsetLeft + e.offsetWidth)) - x0;
+    const k = Math.max(0.4, Math.min(1, ($('viewport').clientWidth - 24) / w));
+    ui.view = { k, x: 12 - x0 * k, y: topInset() - y0 * k };
+    applyView();
+}
+function tidy() {
+    [...S.stages, ...S.versions].forEach(it => { delete it.x; delete it.y; });
+    touch(true); startView();
+}
+
+/* ===========================================
+   DETAIL PANEL: the selected block, stage or version
+   =========================================== */
+function select(type, id, versionId) {
+    if (versionId || type === 'version') ui.flowVersionId = versionId || id;
+    ui.sel = type ? { type, id, versionId } : null;
+    renderFlowPicker();
+    renderProblem(); renderWorld(); renderDetail();
+}
+function renderDetail() {
+    const d = $('detail'); d.textContent = '';
+    inspectorDraft = null;
+    let it = currentItem();
+    if (!it) { ui.sel = null; d.hidden = true; return; }
+    d.hidden = false;
+    const type = ui.sel.type, v = versionById(ui.sel.versionId);
+    if (type === 'block' || type === 'stage') it = beginInspectorEdit(it,type,v);
+    const field = (label, node) => h('div', { class: 'field' }, h('div', { class: 'label' }, label), node);
+    const head = (text, hue) => h('div', { class: 'detail-head' },
+        h('span', { class: 'kind', style: hue ? `color:${hue}` : null }, text),
+        h('button', { class: 'x', type: 'button', 'aria-label': 'Close details', onclick: () => select(null) }, '×'));
+    // A reason is the objective, the setting or an insight. A part of the problem with no text cannot be cited.
+    const toggle = (list, id) => {
+        const on = list.includes(id), blank = PROBLEM_PARTS.has(id) && !on && !(S.problem[id] || '').trim();
+        return chip(id, { on, disabled: blank, title: blank ? `Write the ${id} in the Problem panel before citing it` : null, onclick: e => {
+            e.stopPropagation();
+            const i = list.indexOf(id); if (i >= 0) list.splice(i, 1); else list.push(id);
+            touch(true);
+        } });
+    };
+    const toggles = list => h('div', { class: 'chips' },
+        [...PROBLEM_PARTS.keys()].map(id => toggle(list, id)),
+        S.insights.map(ins => toggle(list, ins.id)),
+        S.insights.length ? null : h('span', { class: 'hint' }, 'Add insights in the Problem panel.'));
+
+    if (type === 'block') {
+        const order = stagesFor(v), i = order.findIndex(s => s.id === it.stage), st = order[i];
+        put(d,
+            head((v ? v.name : 'Catalog') + ` · Block for stage ${i + 1}: ${st ? st.name : 'missing stage'}`, hueOf(it.stage)),
+            editable(() => it.name, v => { it.name = v; }, { placeholder: 'Name', cls: 'big', single: true, label: 'Block name' }),
+            it.status === 'trial' ? h('div', {class:'hint'}, 'Trial in this version') : null,
+            it.status === 'suggested' ? h('div', { class: 'review' },
+                h('span', {}, 'Suggested block awaiting review.'),
+                h('button', { class: 'btn mini', type: 'button', onclick: () => acceptSuggestion(it.id) }, 'Accept'),
+                h('button', { class: 'btn mini', type: 'button', onclick: () => delBlock(it.id, 'Suggestion dismissed.') }, 'Dismiss')) : null,
+            field('What it does', editable(() => it.does, v => { it.does = v; }, { placeholder: 'The update rule or mechanism. Use $…$ for maths.', label: 'What it does' })),
+            field('Why it fits this problem', editable(() => it.why, v => { it.why = v; }, { placeholder: 'Which property of the problem does it exploit?', label: 'Why it fits' })),
+            field('What it relies on', toggles(it.uses)),
+            field('Costs and assumptions', editable(() => it.costs, v => { it.costs = v; }, { placeholder: 'What does it cost, and when does it fail?', label: 'Costs and assumptions' })),
+            field('Evidence', evidenceList(it)),
+            h('div', { class: 'actions' },
+                flowButton('Find a connection', () => openStageTheory(it.stage, it.id, v?.id)),
+                v ? flowButton('Remove from this version', () => removePick(v,it.stage))
+                  : flowButton('Delete block', () => delBlock(it.id))));
+    } else if (type === 'stage') {
+        const order = stagesFor(v), i = order.findIndex(s => s.id === it.id);
+        put(d,
+            head((v ? v.name : 'Shared stages') + ' · Stage ' + (i + 1), hueOf(it.id)),
+            editable(() => it.name, v => { it.name = v; }, { placeholder: 'Name', cls: 'big', single: true, label: 'Stage name' }),
+            field('What this stage does for the objective', editable(() => it.job, v => { it.job = v; }, { placeholder: 'One sentence.', label: 'Job of the stage' })),
+            field('Needed because of', toggles(it.because)),
+            v ? field('Block for this stage', versionPickMenu(v,it)) : null,
+            field('Outgoing connections', flowEditor(v,it.id)),
+            h('div', { class: 'actions' },
+                flowButton('Find a connection', () => openStageTheory(it.id, undefined, v?.id)),
+                flowButton('Move up', () => v ? moveVersionStage(v,it.id,-1) : moveStage(it.id,-1), {disabled:i===0}),
+                flowButton('Move down', () => v ? moveVersionStage(v,it.id,1) : moveStage(it.id,1), {disabled:i===order.length-1}),
+                v ? flowButton('Remove from this version', () => removeVersionStage(v,it.id))
+                  : flowButton('Delete stage', () => delStage(it.id))));
+    } else {
+        put(d,
+            head('Version'),
+            editable(() => it.name, v => { it.name = v; }, { placeholder: 'Name', cls: 'big', single: true, label: 'Version name' }),
+            h('label', { class: 'check' },
+                h('input', { type: 'checkbox', checked: !!it.baseline, onchange: e => {
+                    S.versions.forEach(v => { delete v.baseline; });
+                    if (e.target.checked) it.baseline = true;
+                    touch(true);
+                } }), 'Baseline: other versions are compared with it'),
+            field('Notes', editable(() => it.notes, v => { it.notes = v; }, { placeholder: 'What is this version trying, and what would show it works?', label: 'Notes' })),
+            field('Stages in this version', versionStageMenu(it)),
+            field('Directed flow', flowEditor(it)),
+            field('How it reads', argument(it)),
+            h('div', { class: 'actions' },
+                h('button', { class: 'btn', type: 'button', onclick: () => forkVersion(it.id) }, 'Fork'),
+                h('button', { class: 'btn', type: 'button', onclick: () => delVersion(it.id) }, 'Delete version')));
+    }
+}
+function evidenceList(b) {
+    const box = h('div', {});
+    b.evidence.forEach((ev, i) => {
+        const local = /^theory\//.test(ev.source || '');
+        box.append(h('div', { class: 'ev' },
+            h('div', { class: 'ev-main' },
+                editable(() => ev.source, v => { ev.source = v; }, { placeholder: 'Source: a paper, or theory/cards/file.md', single: true, cls: 'small', label: 'Source' }),
+                editable(() => ev.where, v => { ev.where = v; }, { placeholder: 'Where: theorem, section, page', single: true, cls: 'small', label: 'Location' }),
+                editable(() => ev.says, v => { ev.says = v; }, { placeholder: 'What it establishes, and under which conditions', cls: 'small', label: 'What it says' })),
+            h('div', { class: 'ev-side' },
+                h('button', { class: 'x', type: 'button', 'aria-label': 'Remove this evidence', onclick: () => { b.evidence.splice(i, 1); touch(true); } }, '×'),
+                local ? h('a', { href: '/' + encodeURI(ev.source.split('#')[0]), target: '_blank', rel: 'noopener' }, 'open') : null)));
+    });
+    box.append(h('button', { class: 'btn mini', type: 'button', onclick: () => { b.evidence.push({ source: '', where: '', says: '' }); touch(true); } }, '+ Evidence'));
+    return box;
+}
+/* A version read as an argument: for every stage, what it is for and why the chosen block fits. */
+function argument(v) {
+    const used = usedBy(v);
+    const box = h('div', { class: 'argument' });
+    if (S.problem.objective) box.append(h('p', { class: 'aim' }, S.problem.objective));
+    box.append(h('ol', {}, stagesFor(v).map(s => {
+        const b = pickOf(v, s);
+        return h('li', {},
+            h('div', {}, h('b', {}, s.name || 'Unnamed stage'), s.job ? ': ' + s.job + ' ' : ' ', s.because.map(id => chip(id))),
+            b ? h('div', { class: 'pick' }, h('b', {}, b.name || 'Unnamed block'), b.why ? ': ' + b.why + ' ' : ' (no reason written yet) ', b.uses.map(id => chip(id)))
+              : h('div', { class: 'pick none' }, 'Nothing chosen for this stage.'));
+    })));
+    const unused = S.insights.filter(ins => !used.has(ins.id));
+    if (unused.length) box.append(h('p', { class: 'gap' }, 'Not used by this version: ', unused.map(ins => [chip(ins.id, { miss: true }), ' ' + (ins.text || '') + ' '])));
+    typeset(box);
+    return box;
+}
+
+/* ===========================================
+   EDITS
+   =========================================== */
+function addInsight() {
+    const n = Math.max(0, ...S.insights.map(i => parseInt(String(i.id).replace(/\D/g, ''), 10) || 0)) + 1;
+    S.insights.push({ id: 'I' + n, text: '', basis: '' });
+    touch(true);
+}
+function delInsight(id) {
+    const before = JSON.stringify(S);
+    const n = S.stages.filter(s => s.because.includes(id)).length + S.blocks.filter(b => b.uses.includes(id)).length;
+    S.insights = S.insights.filter(i => i.id !== id);
+    S.knowledge.relations = S.knowledge.relations.filter(e => e.from !== id && e.to !== id);
+    S.stages.forEach(s => { s.because = s.because.filter(i => i !== id); });
+    S.blocks.forEach(b => { b.uses = b.uses.filter(i => i !== id); });
+    for (const v of S.versions) {
+        for (const b of Object.values(v.blockOverrides || {})) b.uses = b.uses.filter(i => i !== id);
+        for (const s of Object.values(v.stageOverrides || {})) s.because = s.because.filter(i => i !== id);
+    }
+    if (ui.focus === id) ui.focus = null;
+    touch(true);
+    offerUndo(`Insight ${id} deleted.${n ? ` ${n} ${n === 1 ? 'stage or block' : 'stages and blocks'} pointed to it.` : ''}`, before);
+}
+/* While the shared flow is a plain sequence it follows the stage list. Once it branches or loops it is left as drawn. */
+const flowIsSequence = () => Array.isArray(S.flow) && sameFlow(flowFor(null), linearEdges(stagesFor(null)));
+function addStage() {
+    if (activeFlowVersion()) return addStageForVersion(activeFlowVersion());
+    const sequence = flowIsSequence();
+    const s = { id: uid('s'), name: 'New stage', job: '', because: [] };
+    S.stages.push(s);
+    if (sequence) S.flow = linearEdges(stagesFor(null));
+    ui.sel = { type: 'stage', id: s.id }; touch(true);
+}
+function moveStage(id, dir) {
+    const order = stagesFor(null), target = order[order.findIndex(s=>s.id===id)+dir];
+    const i = S.stages.findIndex(s=>s.id===id), j = target ? S.stages.indexOf(target) : -1;
+    if (i < 0 || j < 0) return;
+    const sequence = flowIsSequence();
+    [S.stages[i], S.stages[j]] = [S.stages[j], S.stages[i]];
+    if (sequence) S.flow = linearEdges(stagesFor(null));
+    touch(true);
+}
+function delStage(id) {
+    const before = JSON.stringify(S);
+    const uses = S.versions.filter(v => stagesFor(v).some(s => s.id === id));
+    if (uses.length) { toast('Remove this stage from ' + uses.map(v=>v.name).join(', ') + ' before deleting it from the catalog.'); return; }
+    const n = S.blocks.filter(b => b.stage === id).length;
+    const sequence = flowIsSequence();
+    S.stages = S.stages.filter(s => s.id !== id);
+    if (Array.isArray(S.flow)) S.flow = sequence ? linearEdges(stagesFor(null)) : S.flow.filter(e=>e.from!==id && e.to!==id);
+    S.blocks = S.blocks.filter(b => b.stage !== id);
+    S.versions.forEach(v => { delete v.pick[id]; });
+    ui.sel = null; touch(true);
+    offerUndo(`Stage deleted${n ? ' with its ' + plural(n, 'block') : ''}.`, before);
+}
+function delBlock(id, what) {
+    const uses = S.versions.filter(v => Object.values(v.pick).includes(id));
+    if (uses.length) { toast('Remove this block from ' + uses.map(v=>v.name).join(', ') + ' first.'); return; }
+    const before = JSON.stringify(S);
+    S.blocks = S.blocks.filter(b => b.id !== id);
+    if (ui.sel?.type === 'block' && ui.sel.id === id) ui.sel = null;
+    touch(true); offerUndo(what || 'Block deleted.', before);
+}
+function addVersion() {
+    const v = { id: uid('v'), name: 'New version', pick: {}, notes: '' };
+    if (!S.versions.length) v.baseline = true;
+    S.versions.push(v); ui.flowVersionId = v.id; ui.sel = { type: 'version', id: v.id }; touch(true);
+}
+function forkVersion(id) {
+    const src = byId(S.versions, id); if (!src) return;
+    const v = snapshotVersion(src);
+    S.versions.push(v); ui.flowVersionId = v.id; ui.sel = { type: 'version', id: v.id }; touch(true);
+}
+function delVersion(id) {
+    const before = JSON.stringify(S);
+    S.versions = S.versions.filter(v => v.id !== id);
+    for (const v of S.versions) if (v.parent === id) delete v.parent;
+    // A stage made for this version alone goes with it, unless another version uses it or it holds blocks.
+    const inUse = new Set(S.versions.flatMap(v => stagesFor(v).map(s => s.id)));
+    S.stages = S.stages.filter(s => !s.catalogOnly || inUse.has(s.id) || S.blocks.some(b => b.stage === s.id));
+    ui.sel = null; touch(true);
+    offerUndo('Version deleted.', before);
+}
+
+/* ===========================================
+   POINTER: drag a block into a version, move a frame, pan the canvas
+   =========================================== */
+function track(move, up) {
+    const end = ev => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        up(ev);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+}
+function dragBlock(e, node) {
+    const sourceVersion = versionById(node.dataset.version);
+    const sid = node.closest('.slot')?.dataset.stage;
+    const b = sourceVersion ? effectiveBlock(sourceVersion,{id:sid}) : byId(S.blocks,node.dataset.id);
+    if (!b) return;
+    const sx = e.clientX, sy = e.clientY;
+    let ghost = null, over = null;
+    const versionAt = (x, y) => document.elementsFromPoint(x, y).find(n => n.classList && n.classList.contains('version')) || null;
+    track(ev => {
+        if (!ghost) {
+            if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+            busyDrag = true;
+            ghost = h('div', { class: 'ghost', style: `--hue:${hueOf(b.stage)}` }, b.name || 'Block');
+            document.body.append(ghost);
+            $('world').classList.add('dropping');
+            $('frames').querySelectorAll('.slot').forEach(s => { if (s.dataset.stage === b.stage) s.classList.add('target'); });
+        }
+        ghost.style.transform = `translate(${ev.clientX + 12}px, ${ev.clientY + 12}px)`;
+        const t = versionAt(ev.clientX, ev.clientY);
+        if (t !== over) { if (over) over.classList.remove('over'); over = t; if (over) over.classList.add('over'); }
+    }, ev => {
+        if (!ghost) { select('block', b.id, sourceVersion?.id); return; }             // a click, not a drag
+        ghost.remove(); busyDrag = false; $('world').classList.remove('dropping');
+        const t = ev.type === 'pointerup' ? versionAt(ev.clientX, ev.clientY) : null;
+        const v = t ? byId(S.versions, t.dataset.id) : null;
+        if (v && setVersionPick(v,b)) touch(true); else renderWorld();
+    });
+}
+function dragFrame(e, frame) {
+    const kind = frame.dataset.kind, it = frameItem(frame), at = pos.get(frameKey(frame)); if (!it || !at) return;
+    const sx = e.clientX, sy = e.clientY, ox = at.x, oy = at.y;
+    let moved = false;
+    track(ev => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!moved && Math.hypot(dx, dy) < 4) return;
+        if (!moved) { moved = true; busyDrag = true; frame.classList.add('moving'); freezeLayout(); }
+        it.x = Math.round(ox + dx / ui.view.k); it.y = Math.round(oy + dy / ui.view.k);
+        pos.set(frameKey(frame), { x: it.x, y: it.y });
+        frame.style.left = it.x + 'px'; frame.style.top = it.y + 'px';
+        drawLinks();
+    }, () => {
+        busyDrag = false; frame.classList.remove('moving');
+        if (moved) touch(false); else select(kind, it.id, kind === 'stage' ? activeFlowVersion()?.id : null);
+    });
+}
+function panView(e) {
+    const sx = e.clientX, sy = e.clientY, ox = ui.view.x, oy = ui.view.y, vp = $('viewport');
+    let moved = false;
+    track(ev => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!moved && Math.hypot(dx, dy) < 4) return;
+        moved = true; vp.classList.add('panning');
+        ui.view.x = ox + dx; ui.view.y = oy + dy; applyView();
+    }, () => {
+        vp.classList.remove('panning');
+        if (moved) return;
+        if (ui.sel) select(null); else if (ui.focus) setFocus(ui.focus);       // a click on empty canvas clears selection, then focus
+    });
+}
+
+function wire() {
+    const vp = $('viewport');
+    vp.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.target.closest('.detail, .zoom, .banner')) return;
+        const blk = e.target.closest('.block');
+        if (blk) return dragBlock(e, blk);
+        const head = e.target.closest('.frame-head');
+        if (head) return dragFrame(e, head.closest('.frame'));
+        if (e.target.closest('.frame')) return;
+        panView(e);
+    });
+    vp.addEventListener('wheel', e => {
+        if (e.target.closest('.detail')) return;                  // let the detail panel scroll
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+            const r = vp.getBoundingClientRect();
+            zoomAt(e.clientX - r.left, e.clientY - r.top, ui.view.k * Math.exp(-e.deltaY * 0.01));
+        } else { ui.view.x -= e.deltaX; ui.view.y -= e.deltaY; applyView(); }
+    }, { passive: false });
+    vp.addEventListener('dblclick', e => {                        // double-click empty canvas to zoom in, with Shift to zoom out
+        if (e.target.closest('.frame, .detail, .zoom, .banner, .goal')) return;
+        const r = vp.getBoundingClientRect();
+        zoomAt(e.clientX - r.left, e.clientY - r.top, ui.view.k * (e.shiftKey ? 1 / 1.6 : 1.6));
+    });
+    $('frames').addEventListener('keydown', e => {
+        const blk = e.target.classList && e.target.classList.contains('block') ? e.target : null;
+        if (blk && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); select('block', blk.dataset.id, blk.dataset.version); }
+    });
+    const goal = $('goal');
+    goal.addEventListener('pointerdown', stop);
+    goal.addEventListener('click', () => setProblemOpen(true));
+    goal.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === goal) setProblemOpen(true); });
+    document.addEventListener('keydown', e => {
+        if (document.querySelector('dialog[open]')) return;
+        if (!$('knowledgeHost').hidden) {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && undoSnapshot && !e.target.closest('textarea,input')) {
+                e.preventDefault(); undo();
+            }
+            return;
+        }
+        if (e.key === 'Escape') {
+            if (ui.sel) select(null); else if (ui.focus) setFocus(ui.focus);
+            return;
+        }
+        if (e.target.closest && e.target.closest('textarea, input, .detail, .problem, .bar')) return;      // typing, or working in a panel
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && undoSnapshot) { e.preventDefault(); undo(); return; }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && ui.sel) {
+            e.preventDefault();
+            const { type, id } = ui.sel;
+            const v = versionById(ui.sel.versionId);
+            if (type === 'block' && v) { const item = currentItem(); if (item) removePick(v, item.stage); }
+            else if (type === 'stage' && v) removeVersionStage(v,id);
+            else if (type === 'block') delBlock(id); else if (type === 'stage') delStage(id); else delVersion(id);
+        }
+    });
+    $('zoomIn').addEventListener('click', () => zoomCentre(1.2));
+    $('zoomOut').addEventListener('click', () => zoomCentre(1 / 1.2));
+    $('zoomPct').addEventListener('click', () => zoomCentre(1, 1));
+    $('fit').addEventListener('click', fit);
+    $('tidy').addEventListener('click', tidy);
+    $('flow-scope').addEventListener('change', e => chooseFlow(e.target.value));
+    $('algorithmView').addEventListener('click', () => setCanvasView(false));
+    $('graphView').addEventListener('click', () => setCanvasView(true));
+    $('researchGuide').addEventListener('click', openResearchGuide);
+    $('addStage').addEventListener('click', addStage);
+    $('addVersion').addEventListener('click', addVersion);
+    $('toggleProblem').addEventListener('click', () => setProblemOpen($('app').classList.contains('no-problem')));
+    window.addEventListener('resize', renderWorldSoon);          // the automatic layout depends on the width
+    window.addEventListener('beforeunload', e => { if (dirty && online) { e.preventDefault(); e.returnValue = ''; } });
+}
+function setProblemOpen(open) {
+    $('app').classList.toggle('no-problem', !open);
+    $('toggleProblem').setAttribute('aria-pressed', String(open));
+    $('goal').hidden = open;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const v = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null');
+        if (v && [v.x, v.y, v.k].every(Number.isFinite)) { ui.view = v; ui.restored = true; }
+    } catch (e) { /* start from the default view */ }
+    wire();
+    if (window.innerWidth < 860) setProblemOpen(false);
+    await load(true);
+    if (!ui.restored) startView();
+    setInterval(poll, 1500);
+});
+</script>
+</body>
+</html>
