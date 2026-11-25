@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 import server
-from knowledge import PROBLEM_REASONS, connection_context, knowledge_graph, rank_connections, read_cards
+from knowledge import PROBLEM_REASONS, connection_context, knowledge_graph, rank_connections, read_cards, validate_issues
 
 TEXT = {"type": "string"}
 COUNT = {"type": "integer"}
@@ -30,6 +30,8 @@ IMPORT = {
     "rev": TEXT,
     "problem": obj({"objective": TEXT, "setting": TEXT}, ("objective", "setting")),
     "insights": record("id text basis", ("id", "text", "basis")),
+    "issues": record("id title improvement versionId", ("id", "title", "improvement", "status"),
+                     {"status": {"type": "string", "enum": ["open", "resolved"]}}),
     "formulations": record("id title detail", ("id", "title")),
     "theorems": record("id title statement assumptions source where", ("id", "title", "statement")),
     "relations": record("id kind from to claim status source where", ("id", "kind", "from", "to", "claim", "status")),
@@ -54,6 +56,7 @@ TOOLS = {
                   obj({"id": TEXT}, ("id",))),
     "apply_research": ("Atomically append research records to the current canvas via its running HTTP server. "
                        "Use rev from read_canvas. A problem can initialize an empty objective and setting once. "
+                       "An issue records a problem and its expected improvement, optionally for an existing version. "
                        "Optional flow appends explicit arrows between stages (including branches and loops). "
                        "On an empty canvas, supply every arrow in the paper, even sequential ones. "
                        "Cards use a stable slug and optional label (default R1); "
@@ -156,7 +159,7 @@ def add_research(state, args, rev, port):
         if "flow" in args and state.get("flow") is None:
             state["flow"] = previous_flow(state, shared)
     # append to copies of the serialized input; nothing is persisted until all checks pass
-    for field, key in (("insights", "insights"), ("cards", "researchCards"), ("stages", "stages"),
+    for field, key in (("insights", "insights"), ("issues", "issues"), ("cards", "researchCards"), ("stages", "stages"),
                        ("formulations", "formulations"), ("theorems", "theorems"), ("relations", "relations")):
         items = args.get(field, [])
         if not items:
@@ -164,6 +167,7 @@ def add_research(state, args, rev, port):
         added[field] = [row["id"] for row in items]
         owner = state.setdefault("knowledge", {}) if field in ("formulations", "theorems", "relations") else state
         owner.setdefault(key, []).extend(items)
+    validate_issues(state)
     knowledge_graph(state)
     for insight in args.get("insights", []):
         if not insight["text"].strip():

@@ -14,6 +14,12 @@ Open [the canvas](http://127.0.0.1:8770/). A fresh checkout starts with an empty
 
 The server uses the Python standard library and binds to the loopback interface. The page loads KaTeX from a CDN for formula rendering. No build step is required.
 
+## Track issues
+
+Under **Problem → Issues**, enter a title and choose **Add issue**. Use **Expected improvement** to describe what would get better if the issue were solved. Leave **Entire canvas** selected or choose the version it applies to.
+
+Resolve an issue when the work is complete. You can reopen it later. Issues are saved in the local canvas alongside the algorithm.
+
 ## Where work is saved
 
 The server saves the active canvas to `algorithm.json` next to `server.py`. This file includes insights, stages, blocks, versions, the problem graph, and imported research cards. Put local source documents in `theory/sources/` and Markdown cards in `theory/cards/`. Previous saves may appear in `.snapshots/`. Git ignores the live canvas, the theory directory and the snapshots.

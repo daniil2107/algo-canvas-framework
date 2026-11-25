@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from knowledge import (MissingSelection, card_markdown, connection_context, imported_cards,
-                       knowledge_graph, rank_connections)
+                       knowledge_graph, rank_connections, validate_issues)
 
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "algorithm.json"
@@ -50,7 +50,7 @@ THEORY_TYPES = {
 EMPTY = {
     "meta": {"title": "Untitled algorithm"},
     "problem": {"objective": "", "setting": ""},
-    "insights": [], "stages": [], "blocks": [], "versions": [],
+    "insights": [], "stages": [], "blocks": [], "versions": [], "issues": [],
 }
 
 
@@ -76,6 +76,7 @@ def read_state():
         return copy.deepcopy(EMPTY), "0"
     if not isinstance(data, dict):
         raise ValueError("the top level must be an object")
+    validate_issues(data)
     return data, rev
 
 
@@ -213,6 +214,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if any(key not in data for key in KEYS):
                 raise ValueError("expected an object with " + ", ".join(KEYS))
+            validate_issues(data)
             knowledge_graph(data)
         except ValueError as err:
             return self.reply(400, {"error": f"not a canvas state: {err}"})

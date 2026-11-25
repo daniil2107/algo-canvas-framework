@@ -495,6 +495,56 @@ class CanvasView(PageTest):
         self.page.reads("#toast", "Updated from the file on disk.")
 
 
+class Issues(PageTest):
+    row = "#problem article[data-issue-id]"
+
+    def add_issue(self, title):
+        self.page.fill("#problem input", "New issue title", title)
+        self.page.click("#problem button", "Add issue")
+        self.page.see(self.row + " .ed", title)
+
+    def test_an_issue_can_be_edited_resolved_reopened_and_restored(self):
+        page = self.page
+        self.assertFalse(self.saved().get("issues"))
+        self.add_issue("Long return leg")
+        page.fill(self.row + " .ed", "Issue title", "Long return leg on Friday")
+        page.fill(self.row + " .ed", "Expected improvement", "Reduce the distance from the last stop to the depot.")
+        page.click(self.row + " button", "Resolve")
+        issue, = self.saved()["issues"]
+        self.assertEqual((issue["title"], issue["improvement"], issue["status"]),
+                         ("Long return leg on Friday", "Reduce the distance from the last stop to the depot.", "resolved"))
+        self.assertNotIn("versionId", issue)
+
+        page.send("Page.reload")
+        page.see(self.row + " .ed", issue["title"])
+        page.see(self.row + " .ed", issue["improvement"])
+        page.click(self.row + " button", "Reopen")
+        reopened = dict(issue, status="open")
+        self.assertEqual(self.saved()["issues"], [reopened])
+        page.click(self.row + " button", "Delete issue")
+        self.assertEqual(self.saved()["issues"], [])
+        page.click("#toast button", "Undo")
+        self.assertEqual(self.saved()["issues"], [reopened])
+
+    def test_an_issue_keeps_its_identity_across_version_changes(self):
+        page = self.page
+        self.add_issue("Stops in the same district are far apart")
+        page.choose(self.row + " select", "Issue scope", "Savings route")
+        linked, = self.saved()["issues"]
+        self.assertEqual(linked["versionId"], "v-savings")
+        page.click(".version[data-id='v-savings'] .frame-head button", "Fork")
+        page.see(".frame.version.sel .name", "Savings route fork")
+        self.assertEqual(self.saved()["issues"], [linked])
+
+        page.click("#detail button", "Close details")
+        page.click(".version[data-id='v-savings'] .frame-head .name")
+        page.click("#detail button", "Delete version")
+        canvas_wide = {k: v for k, v in linked.items() if k != "versionId"}
+        self.assertEqual(self.saved()["issues"], [canvas_wide])
+        page.click("#toast button", "Undo")
+        self.assertEqual(self.saved()["issues"], [linked])
+
+
 class Suggestions(PageTest):
     def open(self):
         self.page.click(".shelf .block[data-id='b-sweep'] .name")

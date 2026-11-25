@@ -104,6 +104,30 @@ def _records(state, key):
     return value
 
 
+def validate_issues(state):
+    """Check canvas issues and their optional version references."""
+    issues = _records(state, "issues")
+    if not issues:
+        return
+    versions = {v["id"] for v in _records(state, "versions") if isinstance(v.get("id"), str)}
+    seen = set()
+    for issue in issues:
+        key = issue.get("id")
+        if not isinstance(key, str) or not key.strip() or key != key.strip() or key in seen:
+            raise ValueError("issues need unique, nonempty ids without surrounding spaces")
+        seen.add(key)
+        if not isinstance(issue.get("title"), str) or not issue["title"].strip():
+            raise ValueError(f"{key}: issue title must be nonempty text")
+        if not isinstance(issue.get("improvement"), str):
+            raise ValueError(f"{key}: expected improvement must be text")
+        if issue.get("status") not in ("open", "resolved"):
+            raise ValueError(f"{key}: issue status must be open or resolved")
+        if "versionId" in issue:
+            version = issue["versionId"]
+            if not isinstance(version, str) or not version or version not in versions:
+                raise ValueError(f"{key}: issue must reference an existing version")
+
+
 def _mapping(owner, key, label=None):
     value = owner.get(key, {})
     if not isinstance(value, dict):

@@ -61,6 +61,16 @@ p.hint { margin: 0 0 8px; }
 .insight.rel .insight-head .chip, .part.rel .insight-head .chip { outline: 2px solid var(--accent); outline-offset: 1px; }
 .insight-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .insight-head .hint { flex: 1; }
+.issues { margin: 18px 0; }
+.issue-create, .issue-controls { display: flex; align-items: center; gap: 6px; }
+.issues input, .issues select { min-width: 0; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); font: inherit; }
+.issue-create input { flex: 1; padding: 0 7px; }
+.issues h3 { margin: 12px 0 4px; font-size: 12px; }
+.issue-row { padding: 7px 0 9px; border-top: 1px solid var(--line); }
+.issue-title { font-weight: 600; }
+.issue-controls { margin-top: 6px; }
+.issue-controls select { flex: 1; height: 24px; font-size: 12px; }
+.issues .empty-list { margin: 6px 0; }
 
 /* --- click-to-edit text: shows rendered maths, turns into a textarea on click --- */
 .ed { cursor: text; border-radius: 6px; }
@@ -224,6 +234,7 @@ p.hint { margin: 0 0 8px; }
    DATA MODEL (the whole of algorithm.json)
    problem   { objective, setting }
    insights  [{ id: "I1", text, basis }]            facts about the problem
+   issues    [{ id, title, improvement, status: "open" | "resolved", versionId? }]
    stages    [{ id, name, job, because: [reason] }]  the lines of the algorithm, in order
    blocks    [{ id, stage, name, does, why, uses: [reason], costs, evidence: [{source, where, says}], status }]
    versions  [{ id, name, pick: { stageId: blockId }, notes, baseline }]
@@ -233,7 +244,7 @@ p.hint { margin: 0 0 8px; }
 const HUES = ['#3b6fd4', '#c7791a', '#2f8f5b', '#c2447a', '#7a56c8', '#1f8c8c', '#c2503a', '#5f6b7a'];
 const VIEW_KEY = 'algo-canvas-view';
 const PROBLEM_PARTS = new Map([['objective', 'Objective'], ['setting', 'Setting']]);   // reserved reason ids and their labels
-const emptyState = () => ({ meta: { title: 'Untitled algorithm' }, problem: { objective: '', setting: '' }, knowledge: {formulations:[], theorems:[], relations:[]}, insights: [], stages: [], blocks: [], versions: [] });
+const emptyState = () => ({ meta: { title: 'Untitled algorithm' }, problem: { objective: '', setting: '' }, knowledge: {formulations:[], theorems:[], relations:[]}, insights: [], issues: [], stages: [], blocks: [], versions: [] });
 
 let S = emptyState();
 let rev = null;            // revision of the file on disk that S was loaded from or last saved as
@@ -242,7 +253,7 @@ let diskBroken = false;    // the file on disk is not valid JSON
 let dirty = false, saving = false, busyDrag = false;
 let refused = '';          // why the server would not take the last save, while that is unresolved
 let saveTimer = 0, worldTimer = 0, toastTimer = 0;
-const ui = { sel: null, focus: null, view: { x: 40, y: 30, k: 1 }, restored: false };
+const ui = { sel: null, focus: null, view: { x: 40, y: 30, k: 1 }, restored: false, newIssueTitle: '' };
 
 /* ---------- small helpers ---------- */
 const $ = id => document.getElementById(id);
@@ -499,6 +510,56 @@ function chip(id, o = {}) {
 }
 function setFocus(id) { ui.focus = ui.focus === id ? null : id; renderProblem(); renderWorld(); }
 
+function issuesPanel() {
+    const title = h('input', { type: 'text', value: ui.newIssueTitle, placeholder: 'New issue title', 'aria-label': 'New issue title' });
+    const add = h('button', { class: 'btn', type: 'submit', disabled: !title.value.trim() }, 'Add issue');
+    title.addEventListener('input', () => { ui.newIssueTitle = title.value; add.disabled = !title.value.trim(); });
+    const list = h('div');
+    function renderList() {
+        list.replaceChildren();
+        if (!S.issues.length) list.append(h('p', { class: 'hint empty-list' }, 'No issues recorded.'));
+        for (const status of ['open', 'resolved']) {
+            const group = S.issues.filter(issue => issue.status === status);
+            if (!group.length) continue;
+            list.append(h('h3', {}, status === 'open' ? 'Open' : 'Resolved'));
+            for (const issue of group) list.append(issueRow(issue, renderList));
+        }
+    }
+    const form = h('form', { class: 'issue-create', onsubmit: event => {
+        event.preventDefault();
+        if (!title.value.trim()) return;
+        S.issues.push({ id: uid('issue'), title: title.value.trim(), improvement: '', status: 'open' });
+        title.value = ''; ui.newIssueTitle = ''; add.disabled = true;
+        touch(false); renderList(); title.focus();
+    } }, title, add);
+    renderList();
+    return h('section', { class: 'issues', 'aria-labelledby': 'issues-heading' }, h('h2', { id: 'issues-heading' }, 'Issues'), form, list);
+}
+
+function issueRow(issue, renderList) {
+    const scope = h('select', { 'aria-label': 'Issue scope', onchange: event => {
+        if (event.target.value) issue.versionId = event.target.value; else delete issue.versionId;
+        touch(false);
+    } }, h('option', { value: '' }, 'Entire canvas'), S.versions.map(v => h('option', { value: v.id }, v.name || 'Untitled version')));
+    scope.value = issue.versionId || '';
+    const toggleId = 'issue-status-' + issue.id;
+    return h('article', { class: 'issue-row', 'data-issue-id': issue.id, 'aria-label': 'Issue' },
+        editable(() => issue.title, v => { if (v.trim()) issue.title = v.trim(); }, { cls: 'issue-title', single: true, label: 'Issue title' }),
+        h('div', { class: 'label' }, 'Expected improvement'),
+        editable(() => issue.improvement, v => { issue.improvement = v; }, { cls: 'small', placeholder: 'What would improve if this were solved?', label: 'Expected improvement' }),
+        h('div', { class: 'issue-controls' }, scope,
+            h('button', { class: 'btn mini', type: 'button', id: toggleId, onclick: () => {
+                issue.status = issue.status === 'open' ? 'resolved' : 'open';
+                touch(false); renderList(); $(toggleId).focus();
+            } }, issue.status === 'open' ? 'Resolve' : 'Reopen'),
+            h('button', { class: 'x', type: 'button', title: 'Delete issue', 'aria-label': 'Delete issue', onclick: () => {
+                const before = JSON.stringify(S);
+                S.issues = S.issues.filter(i => i.id !== issue.id);
+                touch(false); renderList(); offerUndo('Issue deleted.', before);
+                $('toast').querySelector('button').focus();
+            } }, '×')));
+}
+
 function renderProblem() {
     const p = $('problem'); p.textContent = '';
     const cur = currentItem();
@@ -512,6 +573,7 @@ function renderProblem() {
         part('objective', editable(() => S.problem.objective, v => { S.problem.objective = v; }, { placeholder: 'State the objective in one or two sentences.', label: 'Objective' })),
         h('h2', {}, 'Setting and constraints'),
         part('setting', editable(() => S.problem.setting, v => { S.problem.setting = v; }, { placeholder: 'What can we observe or compute, and what is too expensive?', label: 'Setting' })),
+        issuesPanel(),
         h('h2', {}, 'Insights about the problem'),
         h('p', { class: 'hint' }, 'Every stage and block should point back to one of these, or to the objective or the setting above. Click an id to see where it is used.'));
     for (const ins of S.insights) {
@@ -884,6 +946,7 @@ function forkVersion(id) {
 function delVersion(id) {
     const before = JSON.stringify(S);
     S.versions = S.versions.filter(v => v.id !== id);
+    for (const issue of S.issues) if (issue.versionId === id) delete issue.versionId;
     for (const v of S.versions) if (v.parent === id) delete v.parent;
     // A stage made for this version alone goes with it, unless another version uses it or it holds blocks.
     const inUse = new Set(S.versions.flatMap(v => stagesFor(v).map(s => s.id)));

@@ -87,6 +87,40 @@ class TestCanvas(unittest.TestCase):
         self.assertEqual(self.request("/api/state", "PUT", state, {"If-Match": before})[0], 409)
         self.assertEqual(server.revision(), rev)
 
+    def test_issues_in_a_legacy_canvas_round_trip_through_import_and_save(self):
+        state, _ = server.read_state()
+        del state["issues"]
+        state["versions"] = [{"id": "v1", "name": "Baseline", "pick": {}}]
+        self.assertEqual(self.request("/api/state", "PUT", state)[0], 200)
+        before = server.revision()
+        shared = {"id": "i1", "title": "Slow startup", "improvement": "Shorter wait", "status": "open"}
+        scoped = dict(shared, id="i2", title="Memory use", improvement="", versionId="v1")
+        result = self.call("apply_research", rev=before, issues=[shared, scoped])
+        self.assertEqual(result["added"], {"issues": ["i1", "i2"]})
+        self.assertEqual(self.call("read_canvas"), {"rev": result["rev"], "state": dict(state, issues=[shared, scoped])})
+
+        with self.assertRaisesRegex(ValueError, "stale revision"):
+            self.call("apply_research", rev=before, issues=[dict(shared, id="next")])
+        with self.assertRaisesRegex(ValueError, "unique"):
+            self.call("apply_research", rev=result["rev"], issues=[dict(shared, id="next"), scoped])
+        self.assertEqual(server.revision(), result["rev"])
+
+        edited = dict(state, issues=[dict(shared, status="resolved"), scoped])
+        self.assertEqual(self.request("/api/state", "PUT", edited, {"If-Match": before})[0], 409)
+        self.assertEqual(self.request("/api/state", "PUT", edited, {"If-Match": result["rev"]})[0], 200)
+        self.assertEqual(self.call("read_canvas")["state"], edited)
+
+    def test_invalid_issues_preserve_the_saved_canvas(self):
+        state, rev = server.read_state()
+        issue = {"id": "i1", "title": "Latency", "improvement": "", "status": "open"}
+        for invalid in (None, [False], [issue, issue], [dict(issue, title=" ")],
+                        [dict(issue, status="closed")], [dict(issue, improvement=42)],
+                        [dict(issue, versionId="absent")], [dict(issue, versionId=[])],
+                        [dict(issue, id="")]):
+            with self.subTest(issues=invalid):
+                self.assertEqual(self.request("/api/state", "PUT", dict(state, issues=invalid))[0], 400)
+                self.assertEqual(server.read_state(), (state, rev))
+
     def test_stdio(self):
         records = [
             {"id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
